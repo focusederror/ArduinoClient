@@ -103,41 +103,6 @@ void setup() {
 }
 
 void loop() {
-  uint16_t co2Concentration = 0;
-  float temperature = 0.0;
-  float relativeHumidity = 0.0; 
-
-  //
-  // Wake the sensor up from sleep mode.
-  //
-  error = sensor.wakeUp();
-  if (error != NO_ERROR) {
-    Serial.print("Error trying to execute wakeUp(): ");
-    errorToString(error, errorMessage, sizeof errorMessage);
-    Serial.println(errorMessage);
-    return;
-  }
-  //
-  // Ignore first measurement after wake up.
-  //
-  error = sensor.measureSingleShot();
-  if (error != NO_ERROR) {
-    Serial.print("Error trying to execute measureSingleShot(): ");
-    errorToString(error, errorMessage, sizeof errorMessage);
-    Serial.println(errorMessage);
-    return;
-  }
-
-  //Perform single shot measurement and read data.
-  error = sensor.measureAndReadSingleShot(co2Concentration, temperature,
-                                          relativeHumidity);
-  if (error != NO_ERROR) {
-    Serial.print("Error trying to execute measureAndReadSingleShot(): ");
-    errorToString(error, errorMessage, sizeof errorMessage);
-    Serial.println(errorMessage);
-    return;
-  }
-
   //Check if the client is *not* connected to the server
   if (!client.connected()) {
     Serial.println("Disconnected from server. Attempting to reconnect...");
@@ -153,15 +118,6 @@ void loop() {
       delay(10000);
       return;
     }
-  }
-
-  //-Send Data to Server-
-  //Check if it's time to send data
-  unsigned long currentTime = millis();  // Get current time in milliseconds
-  if (currentTime - lastSendTime >= sendInterval) {
-    String message = "SCD4X;" + String(co2Concentration) + ";" + String(temperature) + ";" + String(relativeHumidity);
-    client.print(message + "\n");  // Send the message, add newline for C# server parsing
-    lastSendTime = currentTime;    // Update the last send time
   }
 
   //-Receive Data from Server-
@@ -200,5 +156,53 @@ void loop() {
     }
     //Add more else if blocks for other commands here
   }
+
+  uint16_t co2Concentration = 0;
+  float temperature = 0.0;
+  float relativeHumidity = 0.0; 
+
+  //
+  // Wake the sensor up from sleep mode.
+  //
+  error = sensor.wakeUp();
+  if (error != NO_ERROR) {
+    Serial.print("Error trying to execute wakeUp(): ");
+    errorToString(error, errorMessage, sizeof errorMessage);
+    Serial.println(errorMessage);
+    return;
+  }
+  //
+  // Ignore first measurement after wake up.
+  //
+  error = sensor.measureSingleShot();
+  if (error != NO_ERROR) {
+    Serial.print("Error trying to execute measureSingleShot(): ");
+    errorToString(error, errorMessage, sizeof errorMessage);
+    Serial.println(errorMessage);
+    return;
+  }
+
+  //Perform single shot measurement and read data.
+  error = sensor.measureAndReadSingleShot(co2Concentration, temperature,
+                                          relativeHumidity);
+  if (error != NO_ERROR) {
+    Serial.print("Error trying to execute measureAndReadSingleShot(): ");
+    errorToString(error, errorMessage, sizeof errorMessage);
+    Serial.println(errorMessage);
+    return;
+  }
+
+  
+
+  //-Send Data to Server-
+  //Check if it's time to send data
+  unsigned long currentTime = millis();  // Get current time in milliseconds
+  if (currentTime - lastSendTime >= sendInterval) {
+    String message = "SCD4X;" + String(co2Concentration) + ";" + String(temperature) + ";" + String(relativeHumidity);
+    client.print(message + "\n");  // Send the message, add newline for C# server parsing
+    lastSendTime = currentTime;    // Update the last send time
+  }
+
+ 
   delay(10);
 }
