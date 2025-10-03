@@ -1,40 +1,102 @@
-#include <WiFi.h> // For ESP32. If ESP8266, use <ESP8266WiFi.h>
-#include <WiFiClient.h> // For TCP client functionality
+#include <WiFi.h>
+#include <WiFiClient.h> 
 #include "secrets.h"
-// --- Network Configuration ---
-// REPLACE with your network credentials
+#include <SensirionI2cScd4x.h>
+#include <Wire.h>
+
+
+
+//Retrieved from secrets.h
 const char ssid[] = SECRET_SSID;
 const char password[] = SECRET_PASS;
 
-// REPLACE with your C# server's IP address (e.g., "192.168.1.105")
-// Find this using 'ipconfig' on Windows or 'ifconfig'/'ip a' on Linux/macOS
 const char* serverIp = "192.168.12.188";
-// This port MUST match the port defined in your C# server (e.g., 8888)
 const int serverPort = 8080;
-
-// Create a WiFiClient object to connect to the TCP server
 WiFiClient client;
 
-bool LED_On = false; 
+#define HUM_RELAY_PIN 7
+#define FAN_RELAY_PIN 8
 
-// --- Timing for sending data to server ---
-const long sendInterval = 5000; // Send data every 5 seconds (5000 milliseconds)
-unsigned long lastSendTime = 0; // Tracks when we last sent data
+#define NO_ERROR 0
+SensirionI2cScd4x sensor;
+
+static char errorMessage[64];
+static int16_t error;
+
+String commandBuffer = "";
+
+void PrintUint64(uint64_t& value) {
+  Serial.print("0x");
+  Serial.print((uint32_t)(value >> 32), HEX);
+  Serial.print((uint32_t)(value & 0xFFFFFFFF), HEX);
+}
+
+//System timings for non-blocking operations
+unsigned long now = 0;
+const long connectAttemptInterval = 10000;
+unsigned long lastConnectAttempt = 0;
 
 
 void setup() {
-  Serial.begin(115200); // Start serial communication for debugging output
-  delay(100); // Small delay to let serial warm up
+  Serial.begin(115200);
+  delay(100);            
 
-  pinMode(LED_BUILTIN, OUTPUT); // Configure the LED pin as an output
+  Wire.begin();
+  sensor.begin(Wire, SCD41_I2C_ADDR_62);
 
+  uint64_t serialNumber = 0;
+  delay(30);
+  
+  error = sensor.wakeUp();
+  if (error != NO_ERROR) {
+    Serial.print("Error trying to execute wakeUp(): ");
+    errorToString(error, errorMessage, sizeof errorMessage);
+    Serial.println(errorMessage);
+  }
+  error = sensor.stopPeriodicMeasurement();
+  if (error != NO_ERROR) {
+    Serial.print("Error trying to execute stopPeriodicMeasurement(): ");
+    errorToString(error, errorMessage, sizeof errorMessage);
+    Serial.println(errorMessage);
+  }
+  error = sensor.reinit();
+  if (error != NO_ERROR) {
+    Serial.print("Error trying to execute reinit(): ");
+    errorToString(error, errorMessage, sizeof errorMessage);
+    Serial.println(errorMessage);
+  }
+  
+  error = sensor.getSerialNumber(serialNumber);
+  if (error != NO_ERROR) {
+    Serial.print("Error trying to execute getSerialNumber(): ");
+    errorToString(error, errorMessage, sizeof errorMessage);
+    Serial.println(errorMessage);
+    return;
+  }
+
+  error = sensor.startLowPowerPeriodicMeasurement();
+  if (error != NO_ERROR) {
+    Serial.print("Error trying to execute startLowPowerPeriodicMeasurement(): ");
+    errorToString(error, errorMessage, sizeof errorMessage);
+    Serial.println(errorMessage);
+    return;
+  }
+
+  Serial.print("serial number: 0x");
+  PrintUint64(serialNumber);
+  Serial.println();
+
+  
+  pinMode(LED_BUILTIN, OUTPUT);
+  pinMode(HUM_RELAY_PIN, OUTPUT);
+  pinMode(FAN_RELAY_PIN, OUTPUT);
+
+  //wifi set up
   Serial.println("\n");
   Serial.print("Connecting to WiFi: ");
   Serial.println(ssid);
-
-  WiFi.begin(ssid, password); // Start Wi-Fi connection process
-
-  // Wait until connected to Wi-Fi
+  WiFi.begin(ssid, password);
+  
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
     Serial.print(".");
@@ -42,71 +104,79 @@ void setup() {
 
   Serial.println("\nWiFi connected!");
   Serial.print("IP Address: ");
-  Serial.println(WiFi.localIP()); // Print the IP address the Arduino got from the router
-
-  delay(1000); // Wait a bit before trying to connect to the server
+  Serial.println(WiFi.localIP()); 
 }
 
 void loop() {
-  // Check if the client is NOT connected to the server
-  if (!client.connected()) {
-    Serial.println("Disconnected from server. Attempting to reconnect...");
-    // If not connected, try to connect
+  now = millis();
+  if (!client.connected() && now - lastConnectAttempt >= connectAttemptInterval) {
+    lastConnectAttempt = now;
+    Serial.println("Attempting to connect...");
     if (client.connect(serverIp, serverPort)) {
-      Serial.println("Reconnected to server!");
-      client.print("Arduino reconnected!"); // Send a message upon reconnection
+      Serial.println("Connected to client!");
+      client.print("Arduino connected!");
     } else {
-      Serial.print("Failed to reconnect to server at ");
+      Serial.print("Failed to connect to client at ");
       Serial.print(serverIp);
       Serial.print(":");
       Serial.println(serverPort);
-      delay(10000); // Wait 5 seconds before trying again to avoid rapid retries
-      return; // Skip the rest of the loop for this iteration
+      return;
     }
   }
 
-  // --- Send Data to Server ---
-  // Check if it's time to send data
-  unsigned long currentTime = millis(); // Get current time in milliseconds
-  if (currentTime - lastSendTime >= sendInterval) {
-    String message = "Hello from Arduino! Uptime: " + String(currentTime / 1000) + "s";
-    Serial.print("Sending to server: ");
-    Serial.println(message);
-    client.print(message + "\n"); // Send the message, add newline for C# server parsing
-    lastSendTime = currentTime; // Update the last send time
-  }
+  //Non-blocking command receive: read bytes and assemble command
+  while (client.available()) {
+    char c = client.read();
+    if (c == '\n') {
+      commandBuffer.trim();
+      if (commandBuffer.length() > 0) {
+        Serial.print("Received command: ");
+        Serial.println(commandBuffer);
 
-  // --- Receive Data from Server ---
-  // Check if there's any incoming data from the server
-  if (client.available()) {
-    String command = client.readStringUntil('\n'); // Read until newline character
-    command.trim(); // Remove any leading/trailing whitespace
-
-    Serial.print("Received command: ");
-    Serial.println(command);
-
-    // --- Command Parsing Logic ---
-    if (command == "LIGHT_ON") {\
-      LED_On = true;
-      digitalWrite(LED_BUILTIN, LED_On); // Turn LED on
-      Serial.println("LED turned ON");
-      client.print("ACK:LIGHT_ON\n"); // Acknowledge command
-    } else if (command == "LIGHT_OFF") {
-      LED_On = false;
-      digitalWrite(LED_BUILTIN, LED_On); // Turn LED off
-      Serial.println("LED turned OFF");
-      client.print("ACK:LIGHT_OFF\n"); // Acknowledge command
-    } else if (command == "LIGHT_TOG"){
-      LED_On = !LED_On;
-      digitalWrite(LED_BUILTIN, LED_On);
-      Serial.println("LED Toggled");
-      client.print("ACK:LIGHT_TOG\n");
-    } else if (command.startsWith("ACK:")) {
-      Serial.print("Server Acknowledged: ");
-      Serial.println(command.substring(4)); // Print the ACK message without "ACK:"
+        if (commandBuffer == "LIGHT_ON") {
+          digitalWrite(LED_BUILTIN, HIGH); // LED on
+          Serial.println("LED turned ON");
+          client.print("ACK:LIGHT_ON\n");
+        } else if (commandBuffer == "LIGHT_OFF") {
+          digitalWrite(LED_BUILTIN, LOW); // LED off
+          Serial.println("LED turned OFF");
+          client.print("ACK:LIGHT_OFF\n");
+        } else if (commandBuffer == "RELAY1_ON") {
+          digitalWrite(HUM_RELAY_PIN, HIGH);
+          Serial.println("Relay turned ON");
+          client.print("ACK:RELAY_ON;" + String(digitalRead(HUM_RELAY_PIN)) + "\n");
+        } else if (commandBuffer == "RELAY1_OFF") {
+          digitalWrite(HUM_RELAY_PIN, LOW);
+          Serial.println("Relay turned OFF");
+          client.print("ACK:RELAY_OFF;" + String(digitalRead(HUM_RELAY_PIN)) + "\n");
+        } else if (commandBuffer == "RELAY2_ON") {
+          digitalWrite(FAN_RELAY_PIN, HIGH);
+          Serial.println("Relay turned ON");
+          client.print("ACK:RELAY_ON;" + String(digitalRead(FAN_RELAY_PIN)) + "\n");
+        } else if (commandBuffer == "RELAY2_OFF") {
+          digitalWrite(FAN_RELAY_PIN, LOW);
+          Serial.println("Relay turned OFF");
+          client.print("ACK:RELAY_OFF;" + String(digitalRead(FAN_RELAY_PIN)) + "\n");
+        }
+        // Add more else if blocks for other commands here
+      }
+      commandBuffer = "";
+    } else {
+      commandBuffer += c;
     }
-    // Add more else if blocks for other commands (e.g., "READ_TEMP", "SET_SERVO:90")
   }
 
-  delay(10); // Small delay to prevent watchdog timer resets on ESP boards
+  uint16_t co2 = 0;
+  float temp = 0.0;
+  float humid = 0.0; 
+
+  bool dataReady = false;
+  error = sensor.getDataReadyStatus(dataReady);
+  if (error == NO_ERROR && dataReady) {
+    error = sensor.readMeasurement(co2, temp, humid);
+    {
+      String message = "SCD4X;" + String(co2) + ";" + String(temp) + ";" + String(humid);
+      client.print(message + "\n");
+    }
+  }
 }
