@@ -4,23 +4,26 @@
 #include <SensirionI2cScd4x.h>
 #include <Wire.h>
 
+
+
 //Retrieved from secrets.h
 const char ssid[] = SECRET_SSID;
 const char password[] = SECRET_PASS;
 
-#ifdef NO_ERROR
-#undef NO_ERROR
-#endif
+const char* serverIp = "192.168.12.188";
+const int serverPort = 8080;
+WiFiClient client;
+
+#define HUM_RELAY_PIN 7
+#define FAN_RELAY_PIN 8
+
 #define NO_ERROR 0
-
-//Pin for relay control
-#define RELAY1_PIN 7
-#define RELAY2_PIN 8
-
 SensirionI2cScd4x sensor;
 
 static char errorMessage[64];
 static int16_t error;
+
+String commandBuffer = "";
 
 void PrintUint64(uint64_t& value) {
   Serial.print("0x");
@@ -28,15 +31,10 @@ void PrintUint64(uint64_t& value) {
   Serial.print((uint32_t)(value & 0xFFFFFFFF), HEX);
 }
 
-const char* serverIp = "192.168.12.188";
-const int serverPort = 8080;
-WiFiClient client;
-
-bool LED_On = false;
-
-//Timing for sending data to server
-const long sendInterval = 5000;
-unsigned long lastSendTime = 0;
+//System timings for non-blocking operations
+unsigned long now = 0;
+const long connectAttemptInterval = 10000;
+unsigned long lastConnectAttempt = 0;
 
 
 void setup() {
@@ -75,23 +73,31 @@ void setup() {
     Serial.println(errorMessage);
     return;
   }
+
+  error = sensor.startLowPowerPeriodicMeasurement();
+  if (error != NO_ERROR) {
+    Serial.print("Error trying to execute startLowPowerPeriodicMeasurement(): ");
+    errorToString(error, errorMessage, sizeof errorMessage);
+    Serial.println(errorMessage);
+    return;
+  }
+
   Serial.print("serial number: 0x");
   PrintUint64(serialNumber);
   Serial.println();
 
   
   pinMode(LED_BUILTIN, OUTPUT);
-  pinMode(RELAY1_PIN, OUTPUT);
-  pinMode(RELAY2_PIN, OUTPUT);
+  pinMode(HUM_RELAY_PIN, OUTPUT);
+  pinMode(FAN_RELAY_PIN, OUTPUT);
 
   //wifi set up
   Serial.println("\n");
   Serial.print("Connecting to WiFi: ");
   Serial.println(ssid);
   WiFi.begin(ssid, password);
-
   
-  while (WiFi.status() != WL_CONNECTED) {//Wait until connected to wifi
+  while (WiFi.status() != WL_CONNECTED) {
     delay(500);
     Serial.print(".");
   }
@@ -99,110 +105,78 @@ void setup() {
   Serial.println("\nWiFi connected!");
   Serial.print("IP Address: ");
   Serial.println(WiFi.localIP()); 
-  delay(1000);
 }
 
 void loop() {
-  //Check if the client is *not* connected to the server
-  if (!client.connected()) {
-    Serial.println("Disconnected from server. Attempting to reconnect...");
-    // If not connected, try to connect
+  now = millis();
+  if (!client.connected() && now - lastConnectAttempt >= connectAttemptInterval) {
+    lastConnectAttempt = now;
+    Serial.println("Attempting to connect...");
     if (client.connect(serverIp, serverPort)) {
-      Serial.println("Reconnected to server!");
-      client.print("Arduino reconnected!");  // Send a message upon reconnectioAcknowledgen
+      Serial.println("Connected to client!");
+      client.print("Arduino connected!");
     } else {
-      Serial.print("Failed to reconnect to server at ");
+      Serial.print("Failed to connect to client at ");
       Serial.print(serverIp);
       Serial.print(":");
       Serial.println(serverPort);
-      delay(10000);
       return;
     }
   }
 
-  //-Receive Data from Server-
-  if (client.available()) {
-    String command = client.readStringUntil('\n');  //Read until newline
-    command.trim();                                 //then trim
+  //Non-blocking command receive: read bytes and assemble command
+  while (client.available()) {
+    char c = client.read();
+    if (c == '\n') {
+      commandBuffer.trim();
+      if (commandBuffer.length() > 0) {
+        Serial.print("Received command: ");
+        Serial.println(commandBuffer);
 
-    Serial.print("Received command: ");
-    Serial.println(command);
-
-    //-Command Parsing Logic-
-    if (command == "LIGHT_ON") {
-      digitalWrite(LED_BUILTIN, HIGH);  //LED on
-      Serial.println("LED turned ON");
-      client.print("ACK:LIGHT_ON\n");  
-    } else if (command == "LIGHT_OFF") {
-      digitalWrite(LED_BUILTIN, LOW);  //LED off
-      Serial.println("LED turned OFF");
-      client.print("ACK:LIGHT_OFF\n");  
-    }  else if (command == "RELAY1_ON"){ //relay on
-      digitalWrite(RELAY1_PIN, HIGH);
-      Serial.println("Relay turned ON");
-      client.print("ACK:RELAY_ON;" + String(digitalRead(RELAY1_PIN)) + "\n");
-    } else if (command == "RELAY1_OFF"){
-      digitalWrite(RELAY1_PIN, LOW); //relay off
-      Serial.println("Relay turned OFF");
-      client.print("ACK:RELAY_OFF;" + String(digitalRead(RELAY1_PIN)) + "\n");
-    } else if (command == "RELAY2_ON"){ //relay on
-      digitalWrite(RELAY2_PIN, HIGH);
-      Serial.println("Relay turned ON");
-      client.print("ACK:RELAY_ON;" + String(digitalRead(RELAY2_PIN)) + "\n");
-    } else if (command == "RELAY2_OFF"){
-      digitalWrite(RELAY2_PIN, LOW); //relay off
-      Serial.println("Relay turned OFF");
-      client.print("ACK:RELAY_OFF;" + String(digitalRead(RELAY2_PIN)) + "\n");
+        if (commandBuffer == "LIGHT_ON") {
+          digitalWrite(LED_BUILTIN, HIGH); // LED on
+          Serial.println("LED turned ON");
+          client.print("ACK:LIGHT_ON\n");
+        } else if (commandBuffer == "LIGHT_OFF") {
+          digitalWrite(LED_BUILTIN, LOW); // LED off
+          Serial.println("LED turned OFF");
+          client.print("ACK:LIGHT_OFF\n");
+        } else if (commandBuffer == "RELAY1_ON") {
+          digitalWrite(HUM_RELAY_PIN, HIGH);
+          Serial.println("Relay turned ON");
+          client.print("ACK:RELAY_ON;" + String(digitalRead(HUM_RELAY_PIN)) + "\n");
+        } else if (commandBuffer == "RELAY1_OFF") {
+          digitalWrite(HUM_RELAY_PIN, LOW);
+          Serial.println("Relay turned OFF");
+          client.print("ACK:RELAY_OFF;" + String(digitalRead(HUM_RELAY_PIN)) + "\n");
+        } else if (commandBuffer == "RELAY2_ON") {
+          digitalWrite(FAN_RELAY_PIN, HIGH);
+          Serial.println("Relay turned ON");
+          client.print("ACK:RELAY_ON;" + String(digitalRead(FAN_RELAY_PIN)) + "\n");
+        } else if (commandBuffer == "RELAY2_OFF") {
+          digitalWrite(FAN_RELAY_PIN, LOW);
+          Serial.println("Relay turned OFF");
+          client.print("ACK:RELAY_OFF;" + String(digitalRead(FAN_RELAY_PIN)) + "\n");
+        }
+        // Add more else if blocks for other commands here
+      }
+      commandBuffer = "";
+    } else {
+      commandBuffer += c;
     }
-    //Add more else if blocks for other commands here
   }
 
-  uint16_t co2Concentration = 0;
-  float temperature = 0.0;
-  float relativeHumidity = 0.0; 
+  uint16_t co2 = 0;
+  float temp = 0.0;
+  float humid = 0.0; 
 
-  //
-  // Wake the sensor up from sleep mode.
-  //
-  error = sensor.wakeUp();
-  if (error != NO_ERROR) {
-    Serial.print("Error trying to execute wakeUp(): ");
-    errorToString(error, errorMessage, sizeof errorMessage);
-    Serial.println(errorMessage);
-    return;
+  bool dataReady = false;
+  error = sensor.getDataReadyStatus(dataReady);
+  if (error == NO_ERROR && dataReady) {
+    error = sensor.readMeasurement(co2, temp, humid);
+    {
+      String message = "SCD4X;" + String(co2) + ";" + String(temp) + ";" + String(humid);
+      client.print(message + "\n");
+    }
   }
-  //
-  // Ignore first measurement after wake up.
-  //
-  error = sensor.measureSingleShot();
-  if (error != NO_ERROR) {
-    Serial.print("Error trying to execute measureSingleShot(): ");
-    errorToString(error, errorMessage, sizeof errorMessage);
-    Serial.println(errorMessage);
-    return;
-  }
-
-  //Perform single shot measurement and read data.
-  error = sensor.measureAndReadSingleShot(co2Concentration, temperature,
-                                          relativeHumidity);
-  if (error != NO_ERROR) {
-    Serial.print("Error trying to execute measureAndReadSingleShot(): ");
-    errorToString(error, errorMessage, sizeof errorMessage);
-    Serial.println(errorMessage);
-    return;
-  }
-
-  
-
-  //-Send Data to Server-
-  //Check if it's time to send data
-  unsigned long currentTime = millis();  // Get current time in milliseconds
-  if (currentTime - lastSendTime >= sendInterval) {
-    String message = "SCD4X;" + String(co2Concentration) + ";" + String(temperature) + ";" + String(relativeHumidity);
-    client.print(message + "\n");  // Send the message, add newline for C# server parsing
-    lastSendTime = currentTime;    // Update the last send time
-  }
-
- 
-  delay(10);
 }
