@@ -175,7 +175,7 @@ void loop() {
   if (error == NO_ERROR && dataReady) {
     error = sensor.readMeasurement(co2, temp, humid);
     {
-      String message = "SCD4X;" + String(co2) + ";" + String(temp) + ";" + String(humid);
+      String message = "SCD4X;" + String(co2) + ";" + String(temp) + ";" + String(humid) + ";" + String(digitalRead(HUM_RELAY_PIN)) + ";" + String(digitalRead(FAN_RELAY_PIN));
       client.print(message + "\n");
     }
   }
