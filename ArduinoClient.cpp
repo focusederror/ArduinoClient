@@ -12,7 +12,10 @@ const char password[] = SECRET_PASS;
 
 const char* serverIp = "192.168.12.188";
 const int serverPort = 8080;
+String macAddress = "";
+boolean macSent = false;
 WiFiClient client;
+bool isConnected = false;
 
 #define HUM_RELAY_PIN 7 
 #define FAN_RELAY_PIN 8
@@ -29,6 +32,14 @@ void PrintUint64(uint64_t& value) {
   Serial.print("0x");
   Serial.print((uint32_t)(value >> 32), HEX);
   Serial.print((uint32_t)(value & 0xFFFFFFFF), HEX);
+}
+
+String macToString(byte mac[]) {
+  char buf[18];
+  snprintf(buf, sizeof(buf),
+           "%02X:%02X:%02X:%02X:%02X:%02X",
+           mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+  return String(buf);
 }
 
 //System timings for non-blocking operations
@@ -105,11 +116,16 @@ void setup() {
   Serial.println("\nWiFi connected!");
   Serial.print("IP Address: ");
   Serial.println(WiFi.localIP()); 
+  
+  byte mac[6];
+  WiFi.macAddress(mac);
+  macAddress = macToString(mac);
 }
 
 void loop() {
   now = millis();
   if (!client.connected() && now - lastConnectAttempt >= connectAttemptInterval) {
+    macSent = false; //reset mac sent flag on disconnect. Haults data sending
     lastConnectAttempt = now;
     Serial.println("Attempting to connect...");
     if (client.connect(serverIp, serverPort)) {
@@ -136,29 +152,32 @@ void loop() {
         if (commandBuffer == "LIGHT_ON") {
           digitalWrite(LED_BUILTIN, HIGH); // LED on
           Serial.println("LED turned ON");
-          client.print("ACK:LIGHT_ON\n");
+          client.print("Received: LIGHT_ON\n");
         } else if (commandBuffer == "LIGHT_OFF") {
           digitalWrite(LED_BUILTIN, LOW); // LED off
           Serial.println("LED turned OFF");
-          client.print("ACK:LIGHT_OFF\n");
+          client.print("Received: LIGHT_OFF\n");
         } else if (commandBuffer == "HUM_ON") {
           digitalWrite(HUM_RELAY_PIN, HIGH);
           Serial.println("Relay turned ON");
-          client.print("ACK:RELAY_ON;" + String(digitalRead(HUM_RELAY_PIN)) + "\n");
+          client.print("Received: RELAY_ON;" + String(digitalRead(HUM_RELAY_PIN)) + "\n");
         } else if (commandBuffer == "HUM_OFF") {
           digitalWrite(HUM_RELAY_PIN, LOW);
           Serial.println("Relay turned OFF");
-          client.print("ACK:RELAY_OFF;" + String(digitalRead(HUM_RELAY_PIN)) + "\n");
+          client.print("Received: RELAY_OFF;" + String(digitalRead(HUM_RELAY_PIN)) + "\n");
         } else if (commandBuffer == "FAN_ON") {
           digitalWrite(FAN_RELAY_PIN, HIGH);
           Serial.println("Relay turned ON");
-          client.print("ACK:RELAY_ON;" + String(digitalRead(FAN_RELAY_PIN)) + "\n");
+          client.print("Received: RELAY_ON;" + String(digitalRead(FAN_RELAY_PIN)) + "\n");
         } else if (commandBuffer == "FAN_OFF") {
           digitalWrite(FAN_RELAY_PIN, LOW);
           Serial.println("Relay turned OFF");
-          client.print("ACK:RELAY_OFF;" + String(digitalRead(FAN_RELAY_PIN)) + "\n");
+          client.print("Received: RELAY_OFF;" + String(digitalRead(FAN_RELAY_PIN)) + "\n");
+        } else if (commandBuffer == "MAC_ACK") {  //Client will not send data until it receives MAC_ACK
+          macSent = true;
+          Serial.println("MAC acknowledged by server");
         }
-        // Add more else if blocks for other commands here
+        //Add more else if blocks for other commands here
       }
       commandBuffer = "";
     } else {
@@ -172,11 +191,15 @@ void loop() {
 
   bool dataReady = false;
   error = sensor.getDataReadyStatus(dataReady);
-  if (error == NO_ERROR && dataReady) {
+
+  if (!macSent) {
+    client.print("MAC;" + macAddress + "\n");
+    Serial.println("Sent MAC address to server: " + macAddress);
+  } else if (error == NO_ERROR && dataReady) {
     error = sensor.readMeasurement(co2, temp, humid);
-    {
-      String message = "SCD4X;" + String(co2) + ";" + String(temp) + ";" + String(humid) + ";" + String(digitalRead(HUM_RELAY_PIN)) + ";" + String(digitalRead(FAN_RELAY_PIN));
-      client.print(message + "\n");
-    }
+
+    String message = "SCD4X;" + String(co2) + ";" + String(temp) + ";" + String(humid) + ";" + String(digitalRead(HUM_RELAY_PIN)) + ";" + String(digitalRead(FAN_RELAY_PIN));
+    client.print(message + "\n");
+    
   }
 }
