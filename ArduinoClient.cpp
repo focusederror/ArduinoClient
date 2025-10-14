@@ -152,27 +152,21 @@ void loop() {
         if (commandBuffer == "LIGHT_ON") {
           digitalWrite(LED_BUILTIN, HIGH); // LED on
           Serial.println("LED turned ON");
-          client.print("Received: LIGHT_ON\n");
         } else if (commandBuffer == "LIGHT_OFF") {
           digitalWrite(LED_BUILTIN, LOW); // LED off
           Serial.println("LED turned OFF");
-          client.print("Received: LIGHT_OFF\n");
         } else if (commandBuffer == "HUM_ON") {
           digitalWrite(HUM_RELAY_PIN, HIGH);
           Serial.println("Relay turned ON");
-          client.print("Received: RELAY_ON;" + String(digitalRead(HUM_RELAY_PIN)) + "\n");
         } else if (commandBuffer == "HUM_OFF") {
           digitalWrite(HUM_RELAY_PIN, LOW);
           Serial.println("Relay turned OFF");
-          client.print("Received: RELAY_OFF;" + String(digitalRead(HUM_RELAY_PIN)) + "\n");
         } else if (commandBuffer == "FAN_ON") {
           digitalWrite(FAN_RELAY_PIN, HIGH);
           Serial.println("Relay turned ON");
-          client.print("Received: RELAY_ON;" + String(digitalRead(FAN_RELAY_PIN)) + "\n");
         } else if (commandBuffer == "FAN_OFF") {
           digitalWrite(FAN_RELAY_PIN, LOW);
           Serial.println("Relay turned OFF");
-          client.print("Received: RELAY_OFF;" + String(digitalRead(FAN_RELAY_PIN)) + "\n");
         } else if (commandBuffer == "MAC_ACK") {  //Client will not send data until it receives MAC_ACK
           macSent = true;
           Serial.println("MAC acknowledged by server");
