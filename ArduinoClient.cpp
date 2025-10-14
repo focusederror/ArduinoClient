@@ -198,19 +198,21 @@ void loop() {
   } else if (error == NO_ERROR && dataReady) {
     error = sensor.readMeasurement(co2, temp, humid);
 
+    string humState;
+    string fanState;
 
     if (String(digitalRead(HUM_RELAY_PIN)) == "1") {
-      HUM_RELAY_PIN = "True";
+      humState = "True";
     } else {
-      HUM_RELAY_PIN = "False";
+      humState = "False";
     } 
     if (String(digitalRead(FAN_RELAY_PIN)) == "1") {
-      FAN_RELAY_PIN = "True";
+      fanState = "True";
     } else {
-      FAN_RELAY_PIN = "False";
+      fanState = "False";
     }
 
-    String message = "SCD4X;" + String(co2) + ";" + String(temp) + ";" + String(humid) + ";" + HUM_RELAY_PIN + ";" + FAN_RELAY_PIN;
+    String message = "SCD4X;" + String(co2) + ";" + String(temp) + ";" + String(humid) + ";" + humState + ";" + fanState;
     client.print(message + "\n");
     
   }
