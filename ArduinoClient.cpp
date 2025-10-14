@@ -198,8 +198,8 @@ void loop() {
   } else if (error == NO_ERROR && dataReady) {
     error = sensor.readMeasurement(co2, temp, humid);
 
-    string humState;
-    string fanState;
+    String humState;
+    String fanState;
 
     if (String(digitalRead(HUM_RELAY_PIN)) == "1") {
       humState = "True";
