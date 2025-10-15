@@ -19,6 +19,8 @@ bool isConnected = false;
 
 #define HUM_RELAY_PIN 7 
 #define FAN_RELAY_PIN 8
+int lastFanRelayState = LOW;
+int lastHumRelayState = LOW;
 
 #define NO_ERROR 0
 SensirionI2cScd4x sensor;
@@ -40,6 +42,19 @@ String macToString(byte mac[]) {
            "%02X:%02X:%02X:%02X:%02X:%02X",
            mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
   return String(buf);
+}
+
+String getPinStateAsString(int pinNumber) {
+  int state = digitalRead(pinNumber);
+  return (state == HIGH) ? "True" : "False";
+}
+
+boolean onRelayChanged(){
+  if (lastHumRelayState != digitalRead(HUM_RELAY_PIN) || lastFanRelayState != digitalRead(FAN_RELAY_PIN)) {
+    return true;
+  } else {
+    return false;
+  }
 }
 
 //System timings for non-blocking operations
@@ -124,13 +139,18 @@ void setup() {
 
 void loop() {
   now = millis();
+
+  lastHumRelayState = digitalRead(HUM_RELAY_PIN);
+  lastFanRelayState = digitalRead(FAN_RELAY_PIN);
+  
+  
+
   if (!client.connected() && now - lastConnectAttempt >= connectAttemptInterval) {
     macSent = false; //reset mac sent flag on disconnect. Haults data sending
     lastConnectAttempt = now;
     Serial.println("Attempting to connect...");
     if (client.connect(serverIp, serverPort)) {
       Serial.println("Connected to client!");
-      client.print("Arduino connected!");
     } else {
       Serial.print("Failed to connect to client at ");
       Serial.print(serverIp);
@@ -149,25 +169,38 @@ void loop() {
         Serial.print("Received command: ");
         Serial.println(commandBuffer);
 
-        if (commandBuffer == "LIGHT_ON") {
+        if (commandBuffer == "LIGHT_ON") 
+        {
           digitalWrite(LED_BUILTIN, HIGH); // LED on
           Serial.println("LED turned ON");
-        } else if (commandBuffer == "LIGHT_OFF") {
+        } 
+        else if (commandBuffer == "LIGHT_OFF") 
+        {
           digitalWrite(LED_BUILTIN, LOW); // LED off
           Serial.println("LED turned OFF");
-        } else if (commandBuffer == "HUM_ON") {
+        } 
+        else if (commandBuffer == "HUM_ON") 
+        {
           digitalWrite(HUM_RELAY_PIN, HIGH);
           Serial.println("Relay turned ON");
-        } else if (commandBuffer == "HUM_OFF") {
+        } 
+        else if (commandBuffer == "HUM_OFF") 
+        {
           digitalWrite(HUM_RELAY_PIN, LOW);
           Serial.println("Relay turned OFF");
-        } else if (commandBuffer == "FAN_ON") {
+        } 
+        else if (commandBuffer == "FAN_ON") 
+        {
           digitalWrite(FAN_RELAY_PIN, HIGH);
           Serial.println("Relay turned ON");
-        } else if (commandBuffer == "FAN_OFF") {
+        } 
+        else if (commandBuffer == "FAN_OFF") 
+        {
           digitalWrite(FAN_RELAY_PIN, LOW);
           Serial.println("Relay turned OFF");
-        } else if (commandBuffer == "MAC_ACK") {  //Client will not send data until it receives MAC_ACK
+        } 
+        else if (commandBuffer == "MAC_ACK") //Client will not send data until it receives MAC_ACK ... to be implemented later
+        {  
           macSent = true;
           Serial.println("MAC acknowledged by server");
         }
@@ -179,6 +212,14 @@ void loop() {
     }
   }
 
+  if (onRelayChanged()){
+    Serilal.println("Entering onRelayChanged");
+    String humState = getPinStateAsString(HUM_RELAY_PIN);
+    String fanState = getPinStateAsString(FAN_RELAY_PIN);
+    String message = "RELAY_UPDATE;" + humState + ";" + fanState;
+    client.print(message + "\n");
+  }
+
   uint16_t co2 = 0;
   float temp = 0.0;
   float humid = 0.0; 
@@ -186,10 +227,7 @@ void loop() {
   bool dataReady = false;
   error = sensor.getDataReadyStatus(dataReady);
 
-  if (!macSent) {
-    client.print("MAC;" + macAddress + "\n");
-    Serial.println("Sent MAC address to server: " + macAddress);
-  } else if (error == NO_ERROR && dataReady) {
+  if (error == NO_ERROR && dataReady) {
     error = sensor.readMeasurement(co2, temp, humid);
 
     String humState;
